@@ -120,6 +120,7 @@ def on() {
     zigbee.on()
 }
 
+//This currently does nothing.... :(
 def resetEnergyUsage() {
 	configure()
 	def timeInMillis = now()/1000 as int
