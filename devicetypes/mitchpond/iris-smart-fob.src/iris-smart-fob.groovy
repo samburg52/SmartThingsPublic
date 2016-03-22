@@ -35,7 +35,10 @@ metadata {
         section {
             input "checkInterval", "enum", title: "Presence timeout (minutes)",
                 defaultValue:"2", options: ["2", "3", "5"], displayDuringSetup: false
+            input "logging", "bool", title: "Enable debug logging",
+                defaultValue: false, displayDuringSetup: false
         }
+        
     }
 
 	tiles(scale: 2) {
@@ -57,9 +60,9 @@ metadata {
 
 def parse(String description) {
     def descMap = zigbee.parseDescriptionAsMap(description)
-    //log.debug descMap
+    logIt descMap
     state.lastCheckin = now()
-    log.debug "lastCheckin = ${state.lastCheckin}"
+    logIt "lastCheckin = ${state.lastCheckin}"
     handlePresenceEvent(true)
     
 	def results = []
@@ -78,7 +81,7 @@ def updated() {
 }
 
 def configure(){
-	log.debug "Configuring Smart Fob..."
+	logIt "Configuring Smart Fob..."
 	[
 	"zdo bind 0x${device.deviceNetworkId} 1 1 6 {${device.zigbeeId}} {}", "delay 200",
     "zdo bind 0x${device.deviceNetworkId} 2 1 6 {${device.zigbeeId}} {}", "delay 200",
@@ -92,7 +95,6 @@ def configure(){
 }
 
 def parseCatchAllMessage(descMap) {
-	//log.debug descMap
     if (descMap?.clusterId == "0006" && descMap?.command == "01") 		//button pressed
     	handleButtonPress(descMap.sourceEndpoint as int)
     else if (descMap?.clusterId == "0006" && descMap?.command == "00") 	//button released
@@ -104,18 +106,18 @@ def parseCatchAllMessage(descMap) {
 
 def parseReportAttributeMessage(descMap) {
 	if (descMap?.cluster == "0001" && descMap?.attrId == "0020") createBatteryEvent(getBatteryLevel(descMap.value))
-    else log.debug descMap
+    else logIt descMap
 }
 
 private createBatteryEvent(percent) {
-	log.debug "Battery level at " + percent
+	logIt "Battery level at " + percent
 	return createEvent([name: "battery", value: percent])
 }
 
 //this method determines if a press should count as a push or a hold and returns the relevant event type
 private handleButtonRelease(button) {
-	log.debug "lastPress state variable: ${state.lastPress}"
-    def sequenceError = {log.error "Uh oh...missed a message? Dropping this event."; state.lastPress = null; return []}	
+	logIt "lastPress state variable: ${state.lastPress}"
+    def sequenceError = {logIt("Uh oh...missed a message? Dropping this event.", "error"); state.lastPress = null; return []}	
     
     if (!state.lastPress) return sequenceError()
 	else if (state.lastPress.button != button) return sequenceError()
@@ -141,7 +143,7 @@ private handleButtonPress(button) {
 }
 
 private createButtonEvent(button,action) {
-	log.debug "Button ${button} ${action}"
+	logIt "Button ${button} ${action}"
 	return createEvent([
     	name: "button",
         value: action, 
@@ -162,10 +164,10 @@ private getBatteryLevel(rawValue) {
 private handlePresenceEvent(present) {
     def wasPresent = device.currentState("presence")?.value == "present"
     if (!wasPresent && present) {
-        log.debug "Sensor is present"
+        logIt "Sensor is present"
         startTimer()
     } else if (!present) {
-        log.debug "Sensor is not present"
+        logIt "Sensor is not present"
         stopTimer()
     }
     def linkText = getLinkText(device)
@@ -175,31 +177,31 @@ private handlePresenceEvent(present) {
         linkText: linkText,
         descriptionText: "${linkText} has ${present ? 'arrived' : 'left'}",
     ]
-    log.debug "Creating presence event: ${eventMap}"
+    logIt "Creating presence event: ${eventMap}"
     sendEvent(eventMap)
 }
 
 private startTimer() {
-    log.debug "Scheduling periodic timer"
+    logIt "Scheduling periodic timer"
     schedule("0 * * * * ?", checkPresenceCallback)
 }
 
 private stopTimer() {
-    log.debug "Stopping periodic timer"
+    logIt "Stopping periodic timer"
     unschedule()
 }
 
 def checkPresenceCallback() {
     def timeSinceLastCheckin = (now() - state.lastCheckin) / 1000
     def theCheckInterval = (checkInterval ? checkInterval as int : 2) * 60
-    log.debug "Sensor checked in ${timeSinceLastCheckin} seconds ago"
+    logIt "Sensor checked in ${timeSinceLastCheckin} seconds ago"
     if (timeSinceLastCheckin >= theCheckInterval) {
         handlePresenceEvent(false)
     }
 }
 
-// handle commands
-def testCmd() {
-    log.debug "Test"
-	zigbee.refreshData("0","4") + zigbee.refreshData("0","5") + zigbee.refreshData("0x20","0x0000")
-}
+// ****** Utility functions ******
+
+def testCmd() { logIt "Testing testing 123","asdf" }
+
+private logIt(str, logLevel = 'debug') {if (settings.logging) log."$logLevel"(str) }
