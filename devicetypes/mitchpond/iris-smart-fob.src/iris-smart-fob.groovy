@@ -28,17 +28,12 @@ metadata {
 	}
     
     preferences{
-    	section {
-    		input ("holdTime", "number", title: "Minimum time in seconds for a press to count as \"held\"",
-        		defaultValue: 3, displayDuringSetup: false)
-        }
-        section {
-            input "checkInterval", "enum", title: "Presence timeout (minutes)",
-                defaultValue:"2", options: ["2", "3", "5"], displayDuringSetup: false
-            input "logging", "bool", title: "Enable debug logging",
-                defaultValue: false, displayDuringSetup: false
-        }
-        
+	    input ("holdTime", "number", title: "Minimum time in seconds for a press to count as \"held\"",
+    		defaultValue: 3, displayDuringSetup: false)
+        input "checkInterval", "enum", title: "Presence timeout (minutes)",
+            defaultValue:"2", options: ["2", "3", "5"], displayDuringSetup: false
+        input "logging", "bool", title: "Enable debug logging",
+            defaultValue: false, displayDuringSetup: false
     }
 
 	tiles(scale: 2) {
@@ -202,6 +197,9 @@ def checkPresenceCallback() {
 
 // ****** Utility functions ******
 
-def testCmd() { logIt "Testing testing 123","asdf" }
+def testCmd() {
+    
+    
+}
 
 private logIt(str, logLevel = 'debug') {if (settings.logging) log."$logLevel"(str) }
