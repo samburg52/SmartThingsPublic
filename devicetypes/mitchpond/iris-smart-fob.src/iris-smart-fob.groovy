@@ -65,7 +65,7 @@ def parse(String description) {
 		results = parseCatchAllMessage(descMap)
 	else if (description?.startsWith('read attr -'))
 		results = parseReportAttributeMessage(descMap)
-    else log.trace descMap
+    else logIt(descMap, "trace")
         
 	return results;
 }
@@ -96,7 +96,7 @@ def parseCatchAllMessage(descMap) {
     	handleButtonRelease(descMap.sourceEndpoint as int)
     else if (descMap?.clusterId == "0020" && descMap?.command == "00") 	//poll control check-in
     	zigbee.command(0x0020, 0x00, "00", "0000")
-    else log.trace "Parse: Unhandled message: ${descMap}"
+    else logIt("Parse: Unhandled message: ${descMap}","trace")
 }
 
 def parseReportAttributeMessage(descMap) {
