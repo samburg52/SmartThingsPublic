@@ -29,197 +29,175 @@ metadata {
 	preferences {}
  
 	tiles(scale: 2) {
-    	standardTile("button", "device.button", decoration: "flat", width: 2, height:2) {
-        	state "default", icon: "st.unknown.zwave.remote-controller", backgroundColor: "#ffffff"
-            state "pushed", backgroundColor: "#79b821"
+    	standardTile("presence", "device.presence", width: 4, height: 4, canChangeBackground: true) {
+            state "present", label: "Present", labelIcon:"st.presence.tile.present", backgroundColor:"#53a7c0"
+            state "not present", labelIcon:"st.presence.tile.not-present", backgroundColor:"#ffffff"
         }
-		valueTile("battery", "device.battery", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
+    	standardTile("button", "device.button", decoration: "flat", width: 2, height: 2) {
+        	state "default", icon: "st.unknown.zwave.remote-controller", backgroundColor: "#ffffff", action: "testCmd"
+        }
+		valueTile("battery", "device.battery", decoration: "flat", width: 2, height: 2) {
 			state "battery", label:'${currentValue}% battery', unit:""
 		}
 
-		main (["battery"])
-		details(["button","battery"])
+		main (["presence","battery"])
+		details(["presence","button","battery"])
 	}
+
 }
- 
+
 def parse(String description) {
-	//log.debug "description: $description"
+    def descMap = zigbee.parseDescriptionAsMap(description)
+    logIt descMap
+    state.lastCheckin = now()
+    logIt "lastCheckin = ${state.lastCheckin}"
+    handlePresenceEvent(true)
     
 	def results = []
-	if (description?.startsWith('catchall:')) {
-		results = parseCatchAllMessage(description)
-	}
-	else if (description?.startsWith('read attr -')) {
-		results = parseReportAttributeMessage(description)
-	}
-    else if (description?.startsWith('zone status')) {
-    	results = parseIasMessage(description)
-    }
-    
-    if (description?.startsWith('enroll request')) {
-    	List cmds = enrollResponse()
-        log.debug "enroll response: ${cmds}"
-        results = cmds?.collect { new physicalgraph.device.HubAction(it) }
-    }
-    return results
-}
- 
-private Map parseCatchAllMessage(String description) {
-    Map resultMap = [:]
-    def cluster = zigbee.parse(description)
-    if (shouldProcessMessage(cluster)) {
-        switch(cluster.clusterId) {
-            case 0x0001:
-            	resultMap = getBatteryResult(cluster.data.last())
-                break
-        }
-    }
-
-    return resultMap
+    if (description?.startsWith('catchall:'))
+		results = parseCatchAllMessage(descMap)
+	else if (description?.startsWith('read attr -'))
+		results = parseReportAttributeMessage(descMap)
+	else if (description?.startsWith('zone status')) 
+    	results = parseIasMessage(descMap)
+    else if (description?.startsWith('enroll request')) 
+    	results = zigbee.enrollResponse()
+    else logIt(descMap, "trace")
+        
+	return results;
 }
 
-private boolean shouldProcessMessage(cluster) {
-    // 0x0B is default response indicating message got through
-    // 0x07 is bind message
-    boolean ignoredMessage = cluster.profileId != 0x0104 || 
-        cluster.command == 0x0B ||
-        cluster.command == 0x07 ||
-        (cluster.data.size() > 0 && cluster.data.first() == 0x3e)
-    return !ignoredMessage
-}
- 
-private parseReportAttributeMessage(String description) {
-	Map descMap = (description - "read attr - ").split(",").inject([:]) { map, param ->
-		def nameAndValue = param.split(":")
-		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
-	}
-
-	def results = []
-    
-	if (descMap.cluster == "0001" && descMap.attrId == "0020") {
-		log.debug "Received battery level report"
-		results = createEvent(getBatteryResult(Integer.parseInt(descMap.value, 16)))
-	}
-
-	return results
+def updated() {
+	startTimer()
+    configure()
 }
 
-private parseIasMessage(String description) {
-	List parsedMsg = description.split(' ')
-	String msgCode = parsedMsg[2]
-	int status = Integer.decode(msgCode)
-	def linkText = getLinkText(device)
-
-	def results = []
-	//log.debug(description)
-	if (status & 0b00000010) {results << createEvent(getButtonResult('pushed'))}
-	else if (~status & 0b00000010) results << createEvent(getButtonResult('released'))
-
-	if (status & 0b00000100) {
-    	//tampered
-	}
-	else if (~status & 0b00000100) {
-		//not tampered
-	}
-	
-	if (status & 0b00001000) {
-	}
-	else if (~status & 0b00001000) {
-		//log.debug "${linkText} battery OK"
-	}
-	//log.debug results
-	return results
-}
-
-private Map getBatteryResult(rawValue) {
-	log.debug 'Battery'
-	def linkText = getLinkText(device)
-    
-    def result = [
-    	name: 'battery'
-    ]
-    
-	def volts = rawValue / 10
-	def descriptionText
-	if (volts > 3.5) {
-		result.descriptionText = "${linkText} battery has too much power (${volts} volts)."
-	}
-	else {
-		def minVolts = 2.1
-    	def maxVolts = 3.0
-		def pct = (volts - minVolts) / (maxVolts - minVolts)
-		result.value = Math.min(100, (int) pct * 100)
-		result.descriptionText = "${linkText} battery was ${result.value}%"
-	}
-
-	return result
-}
-
-private Map getButtonResult(value) {
-	//log.debug 'Button Status'
-	def linkText = getLinkText(device)
-	def descriptionText = "${linkText} was ${value == 'pushed' ? 'pushed' : 'released'}"
-	return [
-		name: 'button',
-		value: value,
-        data: [buttonNumber: 1],
-		descriptionText: descriptionText,
-        displayed: true,
-        isStateChange: true
-	]
-}
-
-def configure() {
-
-	String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
-	log.debug "Configuring Reporting, IAS CIE, and Bindings."
-	def configCmds = [
-		"zcl global write 0x500 0x10 0xf0 {${zigbeeEui}}", "delay 100",
-		"send 0x${device.deviceNetworkId} 1 1", "delay 500",
-
-		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 1 {${device.zigbeeId}} {}", "delay 200",
-		"zcl global send-me-a-report 1 0x20 0x20 3600 21600 {01}",		//checkin time 6 hrs
-		"send 0x${device.deviceNetworkId} 1 1", "delay 500",
-        "st rattr 0x${device.deviceNetworkId} 1 1 0x20"
-	]
-    return configCmds
-}
-
-def enrollResponse() {
-	log.debug "Sending enroll response"
-	String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
+def configure(){
+	logIt "Configuring Care Pendant..."
 	[
-		//Resending the CIE in case the enroll request is sent before CIE is written
-		"zcl global write 0x500 0x10 0xf0 {${zigbeeEui}}", "delay 200",
-		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
-		//Enroll Response
-		"raw 0x500 {01 23 00 00 00}",
-		"send 0x${device.deviceNetworkId} 1 1", "delay 200"
-	]
+	"zdo bind 0x${device.deviceNetworkId} 1 1 0x0500 {${device.zigbeeId}} {}", "delay 200",
+    "zdo bind 0x${device.deviceNetworkId} 1 1 1 {${device.zigbeeId}} {}", "delay 200",
+    "zdo bind 0x${device.deviceNetworkId} 1 1 0x20 {${device.zigbeeId}} {}", "delay 200"
+    ] +
+    zigbee.configureReporting(0x0001,0x0020,0x20,20,20,0x01) +
+    zigbee.writeAttribute(0x0020,0x0000,0x23,0xF0) +
+    zigbee.enrollResponse()
 }
 
-private getEndpointId() {
-	new BigInteger(device.endpointId, 16).toString()
+def parseCatchAllMessage(descMap) {
+    if (descMap?.clusterId == "0020" && descMap?.command == "00") 	//poll control check-in
+    	zigbee.command(0x0020, 0x00, "00", "0000")
+    else logIt("Parse: Unhandled message: ${descMap}","trace")
 }
 
-private hex(value) {
-	new BigInteger(Math.round(value).toString()).toString(16)
+def parseReportAttributeMessage(descMap) {
+	if (descMap?.cluster == "0001" && descMap?.attrId == "0020") createBatteryEvent(getBatteryLevel(descMap.value))
+    else logIt descMap
 }
 
-private String swapEndianHex(String hex) {
-    reverseArray(hex.decodeHex()).encodeHex()
+private parseIasMessage(descMap) {
+	logIt(descMap)
+	if (status & 0b00000010) handleButtonPress(1)
+	else if (~status & 0b00000010) handleButtonRelease(1)
+	else logIt("Unhandled IAS message: ${descMap}")
 }
 
-private byte[] reverseArray(byte[] array) {
-    int i = 0;
-    int j = array.length - 1;
-    byte tmp;
-    while (j > i) {
-        tmp = array[j];
-        array[j] = array[i];
-        array[i] = tmp;
-        j--;
-        i++;
+//this method determines if a press should count as a push or a hold and returns the relevant event type
+private handleButtonRelease(button) {
+	logIt "lastPress state variable: ${state.lastPress}"
+    def sequenceError = {logIt("Uh oh...missed a message? Dropping this event.", "error"); state.lastPress = null; return []}	
+    
+    if (!state.lastPress) return sequenceError()
+	else if (state.lastPress.button != button) return sequenceError()
+    
+    def currentTime = now()
+    def startOfPress = state.lastPress?.time
+    def timeDif = currentTime - startOfPress
+    def holdTimeMillisec = (settings.holdTime?:3).toInteger() * 1000
+    
+    state.lastPress = null	//we're done with this. clear it to make error conditions easier to catch
+    
+    if (timeDif < 0) 
+    //likely a message sequence issue or dropped packet. Drop this press and wait for another.
+    	return sequenceError()
+    else if (timeDif < holdTimeMillisec)
+    	return createButtonEvent(button,"pushed")
+    else 
+    	return createButtonEvent(button,"held")
+}
+
+private handleButtonPress(button) {
+	state.lastPress = [button: button, time: now()]
+}
+
+private createButtonEvent(button,action) {
+	logIt "Button ${button} ${action}"
+	return createEvent([
+    	name: "button",
+        value: action, 
+        data:[buttonNumber: button], 
+        descriptionText: "${device.displayName} button ${button} was ${action}",
+        isStateChange: true, 
+        displayed: true])
+}
+
+private createBatteryEvent(percent) {
+	logIt "Battery level at " + percent
+	return createEvent([name: "battery", value: percent])
+}
+
+private getBatteryLevel(rawValue) {
+	def intValue = Integer.parseInt(rawValue,16)
+	def min = 2.1
+    def max = 3.0
+    def vBatt = intValue / 10
+    return ((vBatt - min) / (max - min) * 100) as int
+}
+
+private handlePresenceEvent(present) {
+    def wasPresent = device.currentState("presence")?.value == "present"
+    if (!wasPresent && present) {
+        logIt "Sensor is present"
+        startTimer()
+    } else if (!present) {
+        logIt "Sensor is not present"
+        stopTimer()
     }
-    return array
+    def linkText = getLinkText(device)
+    def eventMap = [
+        name: "presence",
+        value: present ? "present" : "not present",
+        linkText: linkText,
+        descriptionText: "${linkText} has ${present ? 'arrived' : 'left'}",
+    ]
+    logIt "Creating presence event: ${eventMap}"
+    sendEvent(eventMap)
 }
+
+private startTimer() {
+    logIt "Scheduling periodic timer"
+    schedule("0 * * * * ?", checkPresenceCallback)
+}
+
+private stopTimer() {
+    logIt "Stopping periodic timer"
+    unschedule()
+}
+
+def checkPresenceCallback() {
+    def timeSinceLastCheckin = (now() - state.lastCheckin) / 1000
+    def theCheckInterval = (checkInterval ? checkInterval as int : 2) * 60
+    logIt "Sensor checked in ${timeSinceLastCheckin} seconds ago"
+    if (timeSinceLastCheckin >= theCheckInterval) {
+        handlePresenceEvent(false)
+    }
+}
+
+// ****** Utility functions ******
+
+def testCmd() {
+    
+    
+}
+
+private logIt(str, logLevel = 'debug') {if (settings.logging) log."$logLevel"(str) }
