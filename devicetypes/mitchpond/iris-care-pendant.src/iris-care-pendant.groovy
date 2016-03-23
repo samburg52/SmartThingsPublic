@@ -16,17 +16,25 @@
  
 metadata {
 	definition (name: "Iris Care Pendant", namespace: "mitchpond", author: "Mitch Pond") {
-    	capability "Sensor"
     	capability "Battery"
-		capability "Configuration"
-        capability "Button"
-        
-        command "enrollResponse"
+		capability "Button"
+        capability "Configuration"
+		capability "Presence Sensor"
+		capability "Sensor"
+
+		command "testCmd"
 
 		fingerprint endpointId: "01", inClusters: "0000,0001,0003,0020,0500", outClusters: "0003,0019", manufacturer: "CentraLite", model: "3455-L"
 	}
 
-	preferences {}
+	preferences{
+	    input ("holdTime", "number", title: "Minimum time in seconds for a press to count as \"held\"",
+    		defaultValue: 3, displayDuringSetup: false)
+        input "checkInterval", "enum", title: "Presence timeout (minutes)",
+            defaultValue:"2", options: ["2", "3", "5"], displayDuringSetup: false
+        input "logging", "bool", title: "Enable debug logging",
+            defaultValue: false, displayDuringSetup: false
+    }
  
 	tiles(scale: 2) {
     	standardTile("presence", "device.presence", width: 4, height: 4, canChangeBackground: true) {
